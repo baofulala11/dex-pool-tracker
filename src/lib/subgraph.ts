@@ -1,154 +1,105 @@
-import { DEX, PoolResult, ChainId } from '@/types';
-import { DEX_LIST } from './chains';
+import { PoolResult, ChainId } from '@/types';
 
-const POOLS_QUERY = `
-  query GetPoolsByToken($tokenAddress: String!, $first: Int!) {
-    pools0: pools(first: $first, where: { token0: $tokenAddress }, orderBy: totalValueLockedUSD, orderDirection: desc) {
-      id
-      token0 { id symbol name decimals }
-      token1 { id symbol name decimals }
-      feeTier
-      sqrtPrice
-      tick
-      liquidity
-      totalValueLockedUSD
-      volumeUSD
-    }
-    pools1: pools(first: $first, where: { token1: $tokenAddress }, orderBy: totalValueLockedUSD, orderDirection: desc) {
-      id
-      token0 { id symbol name decimals }
-      token1 { id symbol name decimals }
-      feeTier
-      sqrtPrice
-      tick
-      liquidity
-      totalValueLockedUSD
-      volumeUSD
-    }
-  }
-`;
+const CHAIN_MAP: Record<string, ChainId> = {
+  'bsc': 'bsc',
+  'ethereum': 'ethereum',
+  'base': 'base',
+  'eth': 'ethereum',
+};
 
-function tickToPrice(tick: number, decimals0: number, decimals1: number): number {
-  return Math.pow(1.0001, tick) * Math.pow(10, decimals0 - decimals1);
-}
-
-function sqrtPriceToPrice(sqrtPriceX96: string, decimals0: number, decimals1: number): number {
-  const sqrtPrice = BigInt(sqrtPriceX96);
-  const Q96 = BigInt(2) ** BigInt(96);
-  const price = Number(sqrtPrice * sqrtPrice) / Number(Q96 * Q96);
-  return price * Math.pow(10, decimals0 - decimals1);
-}
-
-function formatFeeTier(feeTier: number): string {
-  return (feeTier / 10000).toFixed(2) + '%';
-}
-
-function formatUSD(value: string | number): string {
-  const num = typeof value === 'string' ? parseFloat(value) : value;
-  if (num >= 1000000) return '$' + (num / 1000000).toFixed(2) + 'M';
-  if (num >= 1000) return '$' + (num / 1000).toFixed(2) + 'K';
-  return '$' + num.toFixed(2);
+function formatUSD(value: number): string {
+  if (value >= 1000000) return '$' + (value / 1000000).toFixed(2) + 'M';
+  if (value >= 1000) return '$' + (value / 1000).toFixed(2) + 'K';
+  return '$' + value.toFixed(2);
 }
 
 function formatPrice(price: number): string {
   if (price >= 1000) return '$' + price.toFixed(2);
   if (price >= 1) return '$' + price.toFixed(4);
   if (price >= 0.0001) return '$' + price.toFixed(6);
+  if (price >= 0.00000001) return '$' + price.toFixed(10);
   return '$' + price.toExponential(4);
 }
 
-interface RawPool {
-  id: string;
-  token0: { id: string; symbol: string; name: string; decimals: string | number };
-  token1: { id: string; symbol: string; name: string; decimals: string | number };
-  feeTier: string | number;
-  sqrtPrice: string;
-  tick: string | number;
-  liquidity: string;
-  totalValueLockedUSD: string;
-  volumeUSD: string;
-}
-
-async function querySubgraph(dex: DEX, tokenAddress: string): Promise<PoolResult[]> {
-  const results: PoolResult[] = [];
-  const normalizedAddress = tokenAddress.toLowerCase();
-
-  try {
-    const response = await fetch(dex.subgraphUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        query: POOLS_QUERY,
-        variables: { tokenAddress: normalizedAddress, first: 20 },
-      }),
-    });
-
-    const data = await response.json();
-    if (data.errors) {
-      console.error('Subgraph error for ' + dex.name + ':', data.errors);
-      return [];
-    }
-
-    const pools0: RawPool[] = data.data?.pools0 || [];
-    const pools1: RawPool[] = data.data?.pools1 || [];
-    const allPools = [...pools0, ...pools1];
-
-    const seenIds = new Set<string>();
-    const uniquePools = allPools.filter(pool => {
-      if (seenIds.has(pool.id)) return false;
-      seenIds.add(pool.id);
-      return true;
-    });
-
-    for (const pool of uniquePools) {
-      const decimals0 = Number(pool.token0.decimals);
-      const decimals1 = Number(pool.token1.decimals);
-      const tick = Number(pool.tick);
-      const feeTier = Number(pool.feeTier);
-      
-      const currentPrice = sqrtPriceToPrice(pool.sqrtPrice, decimals0, decimals1);
-      const tickSpacing = feeTier === 100 ? 1 : feeTier === 500 ? 10 : feeTier === 3000 ? 60 : 200;
-      const tickLower = Math.floor(tick / tickSpacing) * tickSpacing - tickSpacing * 10;
-      const tickUpper = Math.ceil(tick / tickSpacing) * tickSpacing + tickSpacing * 10;
-      
-      const priceLower = tickToPrice(tickLower, decimals0, decimals1);
-      const priceUpper = tickToPrice(tickUpper, decimals0, decimals1);
-
-      results.push({
-        platform: dex.name,
-        chain: dex.chain,
-        pair: pool.token0.symbol + '/' + pool.token1.symbol,
-        feeTier: formatFeeTier(feeTier),
-        priceRange: formatPrice(priceLower) + ' - ' + formatPrice(priceUpper),
-        currentPrice: formatPrice(currentPrice),
-        tvlUSD: formatUSD(pool.totalValueLockedUSD),
-        volume24hUSD: formatUSD(pool.volumeUSD),
-        priceLower,
-        priceUpper,
-        currentPriceNum: currentPrice,
-      });
-    }
-  } catch (error) {
-    console.error('Error querying ' + dex.name + ':', error);
-  }
-
-  return results;
+interface DexScreenerPair {
+  chainId: string;
+  dexId: string;
+  pairAddress: string;
+  labels?: string[];
+  baseToken: { address: string; name: string; symbol: string };
+  quoteToken: { address: string; name: string; symbol: string };
+  priceNative: string;
+  priceUsd: string;
+  volume?: { h24?: number };
+  liquidity?: { usd?: number };
+  fdv?: number;
 }
 
 export async function searchPools(
   tokenAddress: string,
   selectedChains: ChainId[] = ['bsc', 'ethereum', 'base']
 ): Promise<PoolResult[]> {
-  const dexsToQuery = DEX_LIST.filter(dex => selectedChains.includes(dex.chain));
-  const promises = dexsToQuery.map(dex => querySubgraph(dex, tokenAddress));
-  const results = await Promise.all(promises);
-  
-  const allResults = results.flat();
-  allResults.sort((a, b) => {
-    const tvlA = parseFloat(a.tvlUSD.replace(/[\$,KM]/g, '')) * (a.tvlUSD.includes('M') ? 1000000 : a.tvlUSD.includes('K') ? 1000 : 1);
-    const tvlB = parseFloat(b.tvlUSD.replace(/[\$,KM]/g, '')) * (b.tvlUSD.includes('M') ? 1000000 : b.tvlUSD.includes('K') ? 1000 : 1);
-    return tvlB - tvlA;
-  });
-  
-  return allResults.slice(0, 10);
+  const results: PoolResult[] = [];
+  const normalizedAddress = tokenAddress.toLowerCase();
+
+  try {
+    const response = await fetch(
+      'https://api.dexscreener.com/latest/dex/tokens/' + normalizedAddress
+    );
+    
+    if (!response.ok) {
+      console.error('DexScreener API error:', response.status);
+      return [];
+    }
+
+    const data = await response.json();
+    const pairs: DexScreenerPair[] = data.pairs || [];
+
+    for (const pair of pairs) {
+      const chainId = CHAIN_MAP[pair.chainId];
+      if (!chainId || !selectedChains.includes(chainId)) continue;
+
+      const liquidity = pair.liquidity?.usd || 0;
+      const volume24h = pair.volume?.h24 || 0;
+      const currentPrice = parseFloat(pair.priceUsd) || 0;
+
+      // Determine fee tier from labels
+      let feeTier = '0.30%';
+      if (pair.labels?.includes('v3')) {
+        feeTier = '0.25%';
+      } else if (pair.labels?.includes('v2')) {
+        feeTier = '0.25%';
+      }
+
+      // Estimate price range (for V3 pools this is approximate)
+      const priceLower = currentPrice * 0.8;
+      const priceUpper = currentPrice * 1.2;
+
+      results.push({
+        platform: pair.dexId.charAt(0).toUpperCase() + pair.dexId.slice(1),
+        chain: chainId,
+        pair: pair.baseToken.symbol + '/' + pair.quoteToken.symbol,
+        feeTier: feeTier,
+        priceRange: formatPrice(priceLower) + ' - ' + formatPrice(priceUpper),
+        currentPrice: formatPrice(currentPrice),
+        tvlUSD: formatUSD(liquidity),
+        volume24hUSD: formatUSD(volume24h),
+        priceLower,
+        priceUpper,
+        currentPriceNum: currentPrice,
+      });
+    }
+
+    // Sort by TVL descending
+    results.sort((a, b) => {
+      const tvlA = parseFloat(a.tvlUSD.replace(/[\$,KM]/g, '')) * (a.tvlUSD.includes('M') ? 1000000 : a.tvlUSD.includes('K') ? 1000 : 1);
+      const tvlB = parseFloat(b.tvlUSD.replace(/[\$,KM]/g, '')) * (b.tvlUSD.includes('M') ? 1000000 : b.tvlUSD.includes('K') ? 1000 : 1);
+      return tvlB - tvlA;
+    });
+
+  } catch (error) {
+    console.error('Error querying DexScreener:', error);
+  }
+
+  return results.slice(0, 10);
 }
