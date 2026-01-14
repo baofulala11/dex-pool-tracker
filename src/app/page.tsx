@@ -12,21 +12,6 @@ export default function Home() {
   const [error, setError] = useState('');
 
   const handleSearch = async (tokenAddress: string, apiKey: string, selectedChains: ChainId[]) => {
-    if (!tokenAddress.trim()) {
-      setError('Please enter a token contract address');
-      return;
-    }
-
-    if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress.trim())) {
-      setError('Invalid contract address format');
-      return;
-    }
-
-    if (!apiKey.trim()) {
-      setError('Please enter your The Graph API Key');
-      return;
-    }
-
     setLoading(true);
     setError('');
     setResults([]);
@@ -35,10 +20,10 @@ export default function Home() {
       const pools = await searchPools(tokenAddress.trim(), apiKey.trim(), selectedChains);
       setResults(pools);
       if (pools.length === 0) {
-        setError('No liquidity pools found for this token (or API key invalid)');
+        setError('No liquidity pools found. Please check the Token Address and API Key.');
       }
     } catch (err) {
-      setError('Error searching pools. Please check your API Key and try again.');
+      setError('Search failed. Please check console for details.');
       console.error(err);
     } finally {
       setLoading(false);

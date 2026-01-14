@@ -103,6 +103,8 @@ async function querySubgraph(
   if (!endpoint) return [];
 
   try {
+    console.log(`Querying ${dex.name} at ${endpoint} for ${tokenAddress}`);
+    
     // 1. Get Pools
     const poolsRes = await fetch(endpoint, {
       method: 'POST',
@@ -123,6 +125,8 @@ async function querySubgraph(
     const pools1 = poolsData.data?.pools1 || [];
     const allPools = [...pools0, ...pools1];
 
+    console.log(`Found ${allPools.length} pools for ${dex.name}`);
+
     const results: PoolResult[] = [];
 
     // Process each pool
@@ -132,50 +136,57 @@ async function querySubgraph(
       const quoteToken = isToken0 ? pool.token1 : pool.token0;
       
       const currentTick = Number(pool.tick);
-      
       const invertPrice = !isToken0; 
       const currentPriceNum = tickToPrice(currentTick, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
 
-      // 2. Get Positions for this pool
-      const posRes = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          query: POSITIONS_QUERY,
-          variables: { poolId: pool.id }
-        })
-      });
-      
-      const posData = await posRes.json();
-      const rawPositions = posData.data?.positions || [];
-      
-      const positions: PositionResult[] = rawPositions.map((pos: any, idx: number) => {
-        const tickLower = Number(pos.tickLower.tickIdx);
-        const tickUpper = Number(pos.tickUpper.tickIdx);
+      // 2. Get Positions
+      let positions: PositionResult[] = [];
+      try {
+        const posRes = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: POSITIONS_QUERY,
+            variables: { poolId: pool.id }
+          })
+        });
         
-        let priceLower = tickToPrice(tickLower, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
-        let priceUpper = tickToPrice(tickUpper, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
+        const posData = await posRes.json();
         
-        if (invertPrice) {
-          [priceLower, priceUpper] = [priceUpper, priceLower];
+        if (posData.errors) {
+          console.warn(`Positions query error for pool ${pool.id}:`, posData.errors);
+        } else if (posData.data?.positions) {
+          positions = posData.data.positions.map((pos: any, idx: number) => {
+            const tickLower = Number(pos.tickLower.tickIdx);
+            const tickUpper = Number(pos.tickUpper.tickIdx);
+            
+            let priceLower = tickToPrice(tickLower, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
+            let priceUpper = tickToPrice(tickUpper, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
+            
+            if (invertPrice) {
+              [priceLower, priceUpper] = [priceUpper, priceLower];
+            }
+
+            const inRange = currentTick >= tickLower && currentTick < tickUpper;
+
+            return {
+              rank: idx + 1,
+              id: pos.id,
+              owner: pos.owner || 'Unknown',
+              liquidityUSD: estimateLiquidityUSD(pos.liquidity, pool.liquidity, pool.totalValueLockedUSD),
+              priceLower: formatPrice(priceLower),
+              priceUpper: formatPrice(priceUpper),
+              isInRange: inRange,
+              platform: dex.name,
+              chain: dex.chain,
+              pair: `${baseToken.symbol}/${quoteToken.symbol}`,
+              feeTier: (Number(pool.feeTier) / 10000).toFixed(2) + '%'
+            };
+          });
         }
-
-        const inRange = currentTick >= tickLower && currentTick < tickUpper;
-
-        return {
-          rank: idx + 1,
-          id: pos.id,
-          owner: pos.owner,
-          liquidityUSD: estimateLiquidityUSD(pos.liquidity, pool.liquidity, pool.totalValueLockedUSD),
-          priceLower: formatPrice(priceLower),
-          priceUpper: formatPrice(priceUpper),
-          isInRange: inRange,
-          platform: dex.name,
-          chain: dex.chain,
-          pair: `${baseToken.symbol}/${quoteToken.symbol}`,
-          feeTier: (Number(pool.feeTier) / 10000).toFixed(2) + '%'
-        };
-      });
+      } catch (err) {
+        console.warn(`Failed to fetch positions for pool ${pool.id}`, err);
+      }
 
       results.push({
         platform: dex.name,
@@ -185,7 +196,7 @@ async function querySubgraph(
         tvlUSD: formatUSD(pool.totalValueLockedUSD),
         volume24hUSD: formatUSD(pool.volumeUSD),
         currentPrice: formatPrice(currentPriceNum),
-        priceRange: "See positions",
+        priceRange: positions.length > 0 ? `${positions.length} active positions` : "No positions found",
         priceLower: 0, 
         priceUpper: 0,
         currentPriceNum,

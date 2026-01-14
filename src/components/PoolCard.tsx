@@ -32,7 +32,11 @@ export default function PoolCard({ pool, index }: Props) {
       </div>
 
       <div className="p-4">
-        <h4 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">Top 10 LP Positions</h4>
+        <div className="flex justify-between items-center mb-3">
+          <h4 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Top 10 LP Positions</h4>
+          <span className="text-xs text-gray-600 bg-gray-800/50 px-2 py-1 rounded">Real-time On-chain Data</span>
+        </div>
+        
         {pool.positions && pool.positions.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -46,17 +50,21 @@ export default function PoolCard({ pool, index }: Props) {
               </thead>
               <tbody>
                 {pool.positions.map((pos, pIdx) => (
-                  <tr key={pIdx} className="border-b border-gray-800/30 hover:bg-gray-800/20">
+                  <tr key={pIdx} className="border-b border-gray-800/30 hover:bg-gray-800/20 transition-colors">
                     <td className="py-3 pl-2 text-gray-400">#{pos.rank}</td>
                     <td className="py-3 font-mono text-gray-300">
-                      {pos.priceLower} - {pos.priceUpper}
+                      <div className="flex items-center gap-2">
+                        <span className="text-orange-400">{pos.priceLower}</span>
+                        <span className="text-gray-600">-</span>
+                        <span className="text-orange-400">{pos.priceUpper}</span>
+                      </div>
                     </td>
                     <td className="py-3 text-blue-400 font-medium">{pos.liquidityUSD}</td>
                     <td className="py-3">
                       {pos.isInRange ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/30 text-green-400 border border-green-900/50">In Range</span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-900/30 text-green-400 border border-green-900/50">Active</span>
                       ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/30 text-red-400 border border-red-900/50">Out of Range</span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-900/30 text-red-400 border border-red-900/50">Inactive</span>
                       )}
                     </td>
                   </tr>
@@ -65,7 +73,10 @@ export default function PoolCard({ pool, index }: Props) {
             </table>
           </div>
         ) : (
-          <p className="text-gray-500 text-sm italic">No active positions found or data unavailable.</p>
+          <div className="text-center py-8 border border-dashed border-gray-800 rounded-xl bg-gray-900/20">
+            <p className="text-gray-500 text-sm">No active positions found or data unavailable.</p>
+            <p className="text-xs text-gray-600 mt-1">Make sure this is a V3 pool and the API Key is valid.</p>
+          </div>
         )}
       </div>
     </div>

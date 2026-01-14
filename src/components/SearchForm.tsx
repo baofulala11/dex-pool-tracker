@@ -39,7 +39,7 @@ export default function SearchForm({ onSearch, loading, error }: Props) {
           placeholder="Enter your API Key" 
           className="w-full px-4 py-3 bg-[#1a1a1a] border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-orange-500 transition-colors font-mono text-sm" 
         />
-        <p className="text-xs text-gray-500 mt-1">Key is used locally to query The Graph Gateway</p>
+        <p className="text-xs text-gray-500 mt-1">Required for querying The Graph Gateway</p>
       </div>
 
       <div className="mb-6">
@@ -79,14 +79,14 @@ export default function SearchForm({ onSearch, loading, error }: Props) {
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
             </svg>
-            Querying Subgraphs...
+            Scanning Chain...
           </span>
         ) : (
           'Search Pools & Positions'
         )}
       </button>
       
-      {error && <p className="mt-4 text-center text-red-400">{error}</p>}
+      {error && <p className="mt-4 text-center text-red-400 bg-red-900/20 py-2 rounded border border-red-900/50">{error}</p>}
     </div>
   );
 }
