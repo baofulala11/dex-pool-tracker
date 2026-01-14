@@ -1,105 +1,226 @@
-import { PoolResult, ChainId } from '@/types';
+import { DEX, PoolResult, PositionResult, ChainId } from '@/types';
+import { DEX_LIST } from './chains';
 
-const CHAIN_MAP: Record<string, ChainId> = {
-  'bsc': 'bsc',
-  'ethereum': 'ethereum',
-  'base': 'base',
-  'eth': 'ethereum',
-};
+// GraphQL Queries
+const POOLS_QUERY = `
+  query GetPools($token: String!) {
+    pools0: pools(
+      first: 2
+      orderBy: totalValueLockedUSD
+      orderDirection: desc
+      where: { token0: $token }
+    ) {
+      id
+      token0 { id symbol decimals }
+      token1 { id symbol decimals }
+      feeTier
+      sqrtPrice
+      tick
+      liquidity
+      totalValueLockedUSD
+      volumeUSD
+    }
+    pools1: pools(
+      first: 2
+      orderBy: totalValueLockedUSD
+      orderDirection: desc
+      where: { token1: $token }
+    ) {
+      id
+      token0 { id symbol decimals }
+      token1 { id symbol decimals }
+      feeTier
+      sqrtPrice
+      tick
+      liquidity
+      totalValueLockedUSD
+      volumeUSD
+    }
+  }
+`;
 
-function formatUSD(value: number): string {
-  if (value >= 1000000) return '$' + (value / 1000000).toFixed(2) + 'M';
-  if (value >= 1000) return '$' + (value / 1000).toFixed(2) + 'K';
-  return '$' + value.toFixed(2);
+const POSITIONS_QUERY = `
+  query GetPositions($poolId: String!) {
+    positions(
+      first: 10
+      orderBy: liquidity
+      orderDirection: desc
+      where: { pool: $poolId, liquidity_gt: "0" }
+    ) {
+      id
+      owner
+      liquidity
+      tickLower { tickIdx }
+      tickUpper { tickIdx }
+    }
+  }
+`;
+
+function tickToPrice(tick: number, decimalsA: number, decimalsB: number, invert: boolean = false): number {
+  let price = Math.pow(1.0001, tick) * Math.pow(10, decimalsA - decimalsB);
+  if (invert && price !== 0) price = 1 / price;
+  return price;
+}
+
+function formatUSD(val: string | number): string {
+  const num = Number(val);
+  if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
+  if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`;
+  return `$${num.toFixed(2)}`;
 }
 
 function formatPrice(price: number): string {
-  if (price >= 1000) return '$' + price.toFixed(2);
-  if (price >= 1) return '$' + price.toFixed(4);
-  if (price >= 0.0001) return '$' + price.toFixed(6);
-  if (price >= 0.00000001) return '$' + price.toFixed(10);
-  return '$' + price.toExponential(4);
+  if (price === 0) return '0';
+  if (price < 0.000001) return price.toExponential(4);
+  if (price < 1) return price.toFixed(6);
+  if (price > 1000) return price.toFixed(2);
+  return price.toFixed(4);
 }
 
-interface DexScreenerPair {
-  chainId: string;
-  dexId: string;
-  pairAddress: string;
-  labels?: string[];
-  baseToken: { address: string; name: string; symbol: string };
-  quoteToken: { address: string; name: string; symbol: string };
-  priceNative: string;
-  priceUsd: string;
-  volume?: { h24?: number };
-  liquidity?: { usd?: number };
-  fdv?: number;
+function estimateLiquidityUSD(
+  positionLiquidity: string,
+  poolLiquidity: string,
+  poolTVL: string
+): string {
+  const posL = parseFloat(positionLiquidity);
+  const poolL = parseFloat(poolLiquidity);
+  const tvl = parseFloat(poolTVL);
+  
+  if (poolL === 0) return '$0';
+  const val = (posL / poolL) * tvl;
+  return formatUSD(val);
+}
+
+async function querySubgraph(
+  dex: DEX, 
+  tokenAddress: string, 
+  apiKey: string
+): Promise<PoolResult[]> {
+  const endpoint = apiKey 
+    ? `https://gateway.thegraph.com/api/${apiKey}/subgraphs/id/${dex.subgraphId}`
+    : dex.subgraphId.startsWith('http') ? dex.subgraphId : '';
+
+  if (!endpoint) return [];
+
+  try {
+    // 1. Get Pools
+    const poolsRes = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query: POOLS_QUERY,
+        variables: { token: tokenAddress.toLowerCase() }
+      })
+    });
+    
+    const poolsData = await poolsRes.json();
+    if (poolsData.errors) {
+      console.error(`Error fetching pools from ${dex.name}:`, poolsData.errors);
+      return [];
+    }
+
+    const pools0 = poolsData.data?.pools0 || [];
+    const pools1 = poolsData.data?.pools1 || [];
+    const allPools = [...pools0, ...pools1];
+
+    const results: PoolResult[] = [];
+
+    // Process each pool
+    for (const pool of allPools) {
+      const isToken0 = pool.token0.id.toLowerCase() === tokenAddress.toLowerCase();
+      const baseToken = isToken0 ? pool.token0 : pool.token1;
+      const quoteToken = isToken0 ? pool.token1 : pool.token0;
+      
+      const currentTick = Number(pool.tick);
+      
+      const invertPrice = !isToken0; 
+      const currentPriceNum = tickToPrice(currentTick, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
+
+      // 2. Get Positions for this pool
+      const posRes = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: POSITIONS_QUERY,
+          variables: { poolId: pool.id }
+        })
+      });
+      
+      const posData = await posRes.json();
+      const rawPositions = posData.data?.positions || [];
+      
+      const positions: PositionResult[] = rawPositions.map((pos: any, idx: number) => {
+        const tickLower = Number(pos.tickLower.tickIdx);
+        const tickUpper = Number(pos.tickUpper.tickIdx);
+        
+        let priceLower = tickToPrice(tickLower, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
+        let priceUpper = tickToPrice(tickUpper, Number(pool.token0.decimals), Number(pool.token1.decimals), invertPrice);
+        
+        if (invertPrice) {
+          [priceLower, priceUpper] = [priceUpper, priceLower];
+        }
+
+        const inRange = currentTick >= tickLower && currentTick < tickUpper;
+
+        return {
+          rank: idx + 1,
+          id: pos.id,
+          owner: pos.owner,
+          liquidityUSD: estimateLiquidityUSD(pos.liquidity, pool.liquidity, pool.totalValueLockedUSD),
+          priceLower: formatPrice(priceLower),
+          priceUpper: formatPrice(priceUpper),
+          isInRange: inRange,
+          platform: dex.name,
+          chain: dex.chain,
+          pair: `${baseToken.symbol}/${quoteToken.symbol}`,
+          feeTier: (Number(pool.feeTier) / 10000).toFixed(2) + '%'
+        };
+      });
+
+      results.push({
+        platform: dex.name,
+        chain: dex.chain,
+        pair: `${baseToken.symbol}/${quoteToken.symbol}`,
+        feeTier: (Number(pool.feeTier) / 10000).toFixed(2) + '%',
+        tvlUSD: formatUSD(pool.totalValueLockedUSD),
+        volume24hUSD: formatUSD(pool.volumeUSD),
+        currentPrice: formatPrice(currentPriceNum),
+        priceRange: "See positions",
+        priceLower: 0, 
+        priceUpper: 0,
+        currentPriceNum,
+        positions: positions
+      });
+    }
+
+    return results;
+
+  } catch (error) {
+    console.error(`Query failed for ${dex.name}`, error);
+    return [];
+  }
 }
 
 export async function searchPools(
   tokenAddress: string,
+  apiKey: string,
   selectedChains: ChainId[] = ['bsc', 'ethereum', 'base']
 ): Promise<PoolResult[]> {
-  const results: PoolResult[] = [];
-  const normalizedAddress = tokenAddress.toLowerCase();
-
-  try {
-    const response = await fetch(
-      'https://api.dexscreener.com/latest/dex/tokens/' + normalizedAddress
-    );
-    
-    if (!response.ok) {
-      console.error('DexScreener API error:', response.status);
-      return [];
-    }
-
-    const data = await response.json();
-    const pairs: DexScreenerPair[] = data.pairs || [];
-
-    for (const pair of pairs) {
-      const chainId = CHAIN_MAP[pair.chainId];
-      if (!chainId || !selectedChains.includes(chainId)) continue;
-
-      const liquidity = pair.liquidity?.usd || 0;
-      const volume24h = pair.volume?.h24 || 0;
-      const currentPrice = parseFloat(pair.priceUsd) || 0;
-
-      // Determine fee tier from labels
-      let feeTier = '0.30%';
-      if (pair.labels?.includes('v3')) {
-        feeTier = '0.25%';
-      } else if (pair.labels?.includes('v2')) {
-        feeTier = '0.25%';
-      }
-
-      // Estimate price range (for V3 pools this is approximate)
-      const priceLower = currentPrice * 0.8;
-      const priceUpper = currentPrice * 1.2;
-
-      results.push({
-        platform: pair.dexId.charAt(0).toUpperCase() + pair.dexId.slice(1),
-        chain: chainId,
-        pair: pair.baseToken.symbol + '/' + pair.quoteToken.symbol,
-        feeTier: feeTier,
-        priceRange: formatPrice(priceLower) + ' - ' + formatPrice(priceUpper),
-        currentPrice: formatPrice(currentPrice),
-        tvlUSD: formatUSD(liquidity),
-        volume24hUSD: formatUSD(volume24h),
-        priceLower,
-        priceUpper,
-        currentPriceNum: currentPrice,
-      });
-    }
-
-    // Sort by TVL descending
-    results.sort((a, b) => {
-      const tvlA = parseFloat(a.tvlUSD.replace(/[\$,KM]/g, '')) * (a.tvlUSD.includes('M') ? 1000000 : a.tvlUSD.includes('K') ? 1000 : 1);
-      const tvlB = parseFloat(b.tvlUSD.replace(/[\$,KM]/g, '')) * (b.tvlUSD.includes('M') ? 1000000 : b.tvlUSD.includes('K') ? 1000 : 1);
-      return tvlB - tvlA;
-    });
-
-  } catch (error) {
-    console.error('Error querying DexScreener:', error);
+  if (!apiKey) {
+    return [];
   }
 
-  return results.slice(0, 10);
+  const activeDexs = DEX_LIST.filter(d => selectedChains.includes(d.chain));
+  
+  const promises = activeDexs.map(dex => querySubgraph(dex, tokenAddress, apiKey));
+  const results = await Promise.all(promises);
+  
+  return results.flat().sort((a, b) => {
+    const getVal = (s: string) => {
+      if (s.includes('M')) return parseFloat(s) * 1e6;
+      if (s.includes('K')) return parseFloat(s) * 1e3;
+      return parseFloat(s.replace('$',''));
+    };
+    return getVal(b.tvlUSD) - getVal(a.tvlUSD);
+  });
 }

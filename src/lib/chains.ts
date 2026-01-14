@@ -22,46 +22,28 @@ export const CHAINS: Record<ChainId, Chain> = {
 };
 
 export const DEX_LIST: DEX[] = [
+  // BSC
   {
     id: 'pancakeswap-v3-bsc',
-    name: 'PancakeSwap V3',
+    name: 'PancakeSwap',
     chain: 'bsc',
-    subgraphUrl: 'https://api.thegraph.com/subgraphs/name/pancakeswap/exchange-v3-bsc',
+    subgraphId: '78EUqzJmEVJsAKvWghn7qotf9LVGqcTQxJhT5z84ZmgJ',
     version: 'v3',
   },
-  {
-    id: 'uniswap-v3-bsc',
-    name: 'Uniswap V3',
-    chain: 'bsc',
-    subgraphUrl: 'https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3-bsc',
-    version: 'v3',
-  },
+  // Ethereum
   {
     id: 'uniswap-v3-eth',
-    name: 'Uniswap V3',
+    name: 'Uniswap',
     chain: 'ethereum',
-    subgraphUrl: 'https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3',
+    subgraphId: '5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV',
     version: 'v3',
   },
-  {
-    id: 'sushiswap-v3-eth',
-    name: 'SushiSwap V3',
-    chain: 'ethereum',
-    subgraphUrl: 'https://api.thegraph.com/subgraphs/name/sushi-v3/v3-ethereum',
-    version: 'v3',
-  },
+  // Base
   {
     id: 'uniswap-v3-base',
-    name: 'Uniswap V3',
+    name: 'Uniswap',
     chain: 'base',
-    subgraphUrl: 'https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v3-base',
-    version: 'v3',
-  },
-  {
-    id: 'aerodrome-base',
-    name: 'Aerodrome',
-    chain: 'base',
-    subgraphUrl: 'https://api.thegraph.com/subgraphs/name/aerodrome-finance/aerodrome-cl',
+    subgraphId: '43Hwfi3dJSoGpyas9VwNoDAv55yjgGrPpNSmbQZArzMG',
     version: 'v3',
   },
 ];

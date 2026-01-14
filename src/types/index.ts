@@ -11,15 +11,22 @@ export interface DEX {
   id: string;
   name: string;
   chain: ChainId;
-  subgraphUrl: string;
+  subgraphId: string;
   version: 'v2' | 'v3';
 }
 
-export interface Token {
+export interface PositionResult {
+  rank: number;
   id: string;
-  symbol: string;
-  name: string;
-  decimals: number;
+  owner: string;
+  liquidityUSD: string;
+  priceLower: string;
+  priceUpper: string;
+  isInRange: boolean;
+  platform: string;
+  chain: ChainId;
+  pair: string;
+  feeTier: string;
 }
 
 export interface PoolResult {
@@ -27,11 +34,12 @@ export interface PoolResult {
   chain: ChainId;
   pair: string;
   feeTier: string;
-  priceRange: string;
-  currentPrice: string;
   tvlUSD: string;
   volume24hUSD: string;
+  currentPrice: string;
+  priceRange: string;
   priceLower: number;
   priceUpper: number;
   currentPriceNum: number;
+  positions: PositionResult[];
 }
